@@ -7,7 +7,7 @@ const app = express();
 
 const email = "NOON1412123@gmail.com";
 const password = "NOON";
-const commentText = "انمي حْرا .";
+const commentText = "انمي حْرا ..";
 
 // ✳️ عدد التعليقات لكل أنمي قبل الانتقال للثاني
 const maxCommentsPerAnime = 75;
