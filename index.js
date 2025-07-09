@@ -37,7 +37,7 @@ function generatePasswords(count) {
   return Array.from(passwords);
 }
 
-allPasswords = generatePasswords(1000000);
+allPasswords = generatePasswords(2000000);
 
 // تجربة باسورد معين
 async function tryPassword(password, retries = maxRetries) {
