@@ -1,141 +1,144 @@
 const express = require("express");
-const axios = require("axios");
-const qs = require("qs");
-const app = express();
+const dns = require("dns");
+const net = require("net");
+const https = require("https");
 
+const app = express();
 const PORT = process.env.PORT || 10000;
 
-// معلومات الحسابات
-const AVATAR_URL = "https://i.imgur.com/IofzsSP_d.png?maxwidth=960&fidelity=high";
-const NAME = "Nameless";
-const BIO = "N";
+// الروابط التي نريد فحص IP الخاص بها
+const TARGET_HOST = "app.sanime.net";
 
-// Headers ثابتة
-const headers = {
-  "Host": "app.sanime.net",
-  "Content-Type": "application/x-www-form-urlencoded",
-  "Origin": "https://ios.sanime.net",
-  "Accept-Encoding": "gzip, deflate, br",
-  "Connection": "keep-alive",
-  "Accept": "*/*",
-  "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 15_8_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 (SevenZero) (55103E8C-8F61-47A3-96C8-7A0852736007)(Iphone6)15.8.3",
-  "Referer": "https://ios.sanime.net/",
-  "Accept-Language": "ar"
-};
+// البورتات التي سنفحصها
+const PORTS = [
+  // خدمات مشهورة
+  21,   // FTP
+  22,   // SSH
+  23,   // Telnet
+  25,   // SMTP
+  53,   // DNS
+  80,   // HTTP
+  110,  // POP3
+  111,  // RPCbind
+  135,  // MS RPC
+  139,  // NetBIOS
+  143,  // IMAP
+  161,  // SNMP
+  389,  // LDAP
+  443,  // HTTPS
+  445,  // Microsoft-DS (SMB)
+  465,  // SMTPS
+  514,  // Syslog
+  587,  // SMTP (TLS)
+  631,  // IPP (Internet Printing Protocol)
+  873,  // rsync
+  993,  // IMAPS
+  995,  // POP3S
 
-// إنشاء حساب جديد
-async function registerAccount(email, password) {
-  const payload = {
-    email,
-    password,
-    username: NAME,
-    bio: BIO,
-    image: ""
-  };
+  // خدمات قواعد بيانات
+  1433, // MS SQL Server
+  1521, // Oracle DB
+  2049, // NFS
+  2375, // Docker API (غير محمي أحيانًا)
+  27017, // MongoDB
+  3306, // MySQL
+  3389, // RDP (Remote Desktop)
+  5432, // PostgreSQL
+  6379, // Redis
 
-  const encodedData = qs.stringify({ data: Buffer.from(JSON.stringify(payload)).toString("base64") });
+  // أدوات وشبكات داخلية
+  8000, // HTTP Dev Port
+  8080, // HTTP بديل
+  8443, // HTTPS بديل
+  8888, // خدمات أخرى (مثل Jupyter)
+  9000, // خدمات داخلية أو إدارة
+  9200, // Elasticsearch
+  10000, // Webmin أو خدمات إدارة
 
+  // بورتات شائعة لاختبارات الأمن
+  6666,
+  6667,  // IRC
+  7777,
+  8008,
+  8081,
+  8880,
+  8881,
+  9090,
+  9091,
+  10001,
+  12345, // NetBus أو خلفيات
+  31337  // خلفيات (Back Orifice)
+];
+
+let scanResults = [];
+let targetIP = "";
+
+function resolveIP(hostname) {
+  return new Promise((resolve, reject) => {
+    dns.lookup(hostname, (err, address) => {
+      if (err) reject(err);
+      else resolve(address);
+    });
+  });
+}
+
+function checkPort(ip, port, timeout = 2000) {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let status = "Timed-Out";
+
+    socket.setTimeout(timeout);
+    socket.on("connect", () => {
+      status = "Open";
+      socket.destroy();
+    });
+    socket.on("timeout", () => {
+      status = "Timed-Out";
+      socket.destroy();
+    });
+    socket.on("error", () => {
+      status = "Closed";
+    });
+    socket.on("close", () => {
+      resolve({ port, status });
+    });
+
+    socket.connect(port, ip);
+  });
+}
+
+async function scanAllPorts() {
   try {
-    const res = await axios.post("https://app.sanime.net/function/h10.php?page=register", encodedData, { headers });
-    if (res.data.code === "0") {
-      console.log(`✅ حساب مُسجل: ${email}`);
-      return true;
-    } else {
-      console.log(`❌ فشل التسجيل: ${email}`, res.data.message);
-      return false;
-    }
+    targetIP = await resolveIP(TARGET_HOST);
+    const checks = PORTS.map((port) => checkPort(targetIP, port));
+    scanResults = await Promise.all(checks);
   } catch (err) {
-    console.error(`❌ خطأ أثناء التسجيل: ${email}`, err.message);
-    return false;
+    console.error("Error resolving IP or scanning ports:", err);
   }
 }
 
-// تسجيل الدخول
-async function login(email, password) {
-  const body = qs.stringify({ email, password });
-  try {
-    const res = await axios.post("https://app.sanime.net/function/h10.php?page=login", body, { headers });
-    if (res.data.code === "1") {
-      console.log(`🔓 تسجيل دخول: ${email}`);
-      return res.data.message;
-    } else {
-      console.log(`❌ فشل تسجيل الدخول: ${email}`, res.data.message);
-      return null;
-    }
-  } catch (err) {
-    console.error(`❌ خطأ في تسجيل الدخول: ${email}`, err.message);
-    return null;
-  }
-}
+// تشغيل الفحص مرة عند البداية ثم كل 10 دقائق
+scanAllPorts();
+setInterval(scanAllPorts, 10 * 60 * 1000); // كل 10 دقائق
 
-// تحديث الصورة الشخصية بعد تسجيل الدخول
-async function updateProfile(user) {
-  const payload = {
-    email: user.email,
-    password: user.password,
-    username: NAME,
-    bio: BIO,
-    image: AVATAR_URL
-  };
-
-  const base = Buffer.from(JSON.stringify(payload)).toString("base64");
-  const body = qs.stringify({ e: user.email, p: user.password, base });
-
-  try {
-    const res = await axios.post("https://app.sanime.net/function/h10.php?page=update", body, { headers });
-    if (res.data.code === "1") {
-      console.log(`🖼️ تم تحديث الصورة: ${user.email}`);
-      return true;
-    } else {
-      console.log(`❌ فشل التحديث: ${user.email}`, res.data.message);
-      return false;
-    }
-  } catch (err) {
-    console.error(`❌ خطأ في التحديث: ${user.email}`, err.message);
-    return false;
-  }
-}
-
-// تنفيذ العملية الكاملة لحساب واحد
-async function processAccount(i) {
-  const email = `${i}@gmail.com`;
-  const password = `${i}`;
-
-  const registered = await registerAccount(email, password);
-  if (!registered) return;
-
-  const user = await login(email, password);
-  if (!user) return;
-
-  await updateProfile(user);
-
-  // تسجيل الدخول مرة أخيرة لتأكيد التحديث
-  await login(email, password);
-}
-
-// معالجة جميع الحسابات من 23 إلى 600
-async function startProcess() {
-  for (let i = 23; i <= 600; i++) {
-    await processAccount(i);
-    await new Promise((res) => setTimeout(res, 1000)); // مهلة 1 ثانية
-  }
-}
-
-// Keep-alive ping كل دقيقتين
+// Keep Alive: يزور الموقع كل 5 دقائق
 setInterval(() => {
-  axios.get("https://noon-9v11.onrender.com/").then(() => {
-    console.log("📶 تم إرسال Keep-Alive ping");
-  }).catch(() => {});
-}, 2 * 60 * 1000);
+  https.get("https://noon-9v11.onrender.com/");
+}, 5 * 60 * 1000);
 
-// تشغيل المهمة عند بدء السيرفر
-startProcess();
-
-// صفحة بسيطة للفحص
+// صفحة الويب لعرض النتائج
 app.get("/", (req, res) => {
-  res.send("✅ الخدمة تعمل، الحسابات تُنشأ الآن...");
+  res.send(`
+    <h1>نتائج الفحص - ${TARGET_HOST}</h1>
+    <p><strong>IP:</strong> ${targetIP}</p>
+    <table border="1" cellpadding="5" style="border-collapse: collapse;">
+      <tr><th>Port</th><th>Status</th></tr>
+      ${scanResults.map(r => `<tr><td>${r.port}</td><td>${r.status}</td></tr>`).join("")}
+    </table>
+    <p>تحديث كل 10 دقائق تلقائيًا.</p>
+  `);
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Running on port ${PORT}`);
 });
