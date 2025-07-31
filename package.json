@@ -1,5 +1,5 @@
 {
-  "name": "port-checker",
+  "name": "NOON",
   "version": "1.0.0",
   "description": "SSH & MySQL Brute Force using common credential lists",
   "main": "index.js",
