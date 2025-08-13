@@ -6,7 +6,6 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const express = require('express');
 const app = express();
 
-
 const GITHUB_USER = 'noon1231';
 const GITHUB_REPO = 'NOON';
 const FILE_PATH = 'p.txt';
@@ -16,18 +15,15 @@ const KEEP_ALIVE_URL = 'https://noon-9v11.onrender.com/';
 const BATCH_SIZE = 200; 
 const TIMEOUT = 4000; 
 
-
 let proxyList = [];
 let goodProxies = [];
 let checking = false;
 let lastUpdate = new Date();
 
-
 async function loadProxies() {
   const res = await axios.get(RAW_URL);
   proxyList = res.data.split(/\r?\n/).filter(line => line.trim());
 }
-
 
 async function testProxy(proxy) {
   let agent;
@@ -44,7 +40,6 @@ async function testProxy(proxy) {
   }
 }
 
-
 async function saveGoodProxies() {
   const content = goodProxies.join('\n');
   const url = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
@@ -58,7 +53,6 @@ async function saveGoodProxies() {
     sha
   }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 }
-
 
 async function checkAllProxies() {
   if (checking) return;
@@ -83,7 +77,6 @@ async function checkAllProxies() {
 setInterval(async () => {
   try { await axios.get(KEEP_ALIVE_URL); } catch {}
 }, 5 * 60 * 1000);
-
 
 app.get('/', (req, res) => {
   res.send(`
