@@ -1,5 +1,5 @@
 {
-  "name": "noon",
+  "name": "NOON",
   "version": "1.0.0",
   "description": "Proxy checker and keep-alive service for NOON project",
   "main": "index.js",
