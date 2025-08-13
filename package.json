@@ -1,14 +1,21 @@
 {
-  "name": "NOON",
+  "name": "noon",
   "version": "1.0.0",
+  "description": "Proxy checker and keep-alive service for NOON project",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
+  "keywords": [],
+  "author": "NOON",
+  "license": "MIT",
   "dependencies": {
-    "@octokit/rest": "^20.0.0",
-    "express": "^4.18.2",
-    "https-proxy-agent": "^7.0.2",
+    "axios": "^1.6.6",
+    "https-proxy-agent": "^5.0.1",
+    "socks-proxy-agent": "^6.0.1",
     "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
