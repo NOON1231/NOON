@@ -8,8 +8,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
 // الإعدادات
-let targetUrl = "https://get.example.com";
-let concurrentRequests = 10; // عدد الطلبات في نفس اللحظة
+let targetUrl = "https://app.sanime.net/function/h10.php?page=animeCmd&id=11759";
+let concurrentRequests = 200; // عدد الطلبات في نفس اللحظة
 let running = false;
 
 // رابط الـ Render نفسه (self-ping)
