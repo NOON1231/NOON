@@ -9,8 +9,8 @@ app.use(express.json());
 
 // الإعدادات
 let targetUrl = "https://app.sanime.net/function/h10.php?page=animeCmd&id=11759";
-let concurrentRequests = 200; // عدد الطلبات في نفس اللحظة
-let running = false;
+let concurrentRequests = 1000; // عدد الطلبات في نفس اللحظة
+let running = true;
 
 // رابط الـ Render نفسه (self-ping)
 const selfUrl = "https://noon-9v11.onrender.com/";
